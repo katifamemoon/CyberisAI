@@ -38,9 +38,6 @@ model_manager = ModelManager()
 detection_service = DetectionService()
 logging_service = LoggingService()
 
-# Global variable for current model
-current_model = "weapon"
-
 # Load models on startup
 @app.on_event("startup")
 async def load_models():
@@ -49,8 +46,6 @@ async def load_models():
         logger.error("No models loaded successfully")
     else:
         logger.info("Models loaded successfully")
-        global current_model
-        current_model = model_manager.current_model
 
 # Health check endpoint
 @app.get("/")
@@ -68,9 +63,7 @@ async def get_models():
 # Switch between models
 @app.post("/models/switch")
 async def switch_model(model_name: str = Form(...)):
-    global current_model
     if model_manager.switch_model(model_name):
-        current_model = model_name
         return {"message": f"Switched to {model_name} model", "current_model": model_name}
     else:
         return {"error": "Invalid model name. Use 'weapon' or 'fire_smoke'"}
@@ -78,8 +71,6 @@ async def switch_model(model_name: str = Form(...)):
 # Detect objects in an image
 @app.post("/detect")
 async def detect_objects(file: UploadFile = File(...)):
-    global current_model
-    
     # Select model based on current selection
     model = model_manager.get_current_model()
     if model is None:

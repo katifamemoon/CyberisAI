@@ -21,9 +21,13 @@ This is a full-stack web application that integrates two trained YOLO object det
 │   ├── main.py
 │   ├── requirements.txt
 │   └── .env
-└── frontend/
-    ├── src/
-    ├── package.json
+├── frontend/
+│   ├── src/
+│   ├── package.json
+│   └── ...
+└── testing/
+    ├── api_endpoints/
+    ├── model_testing/
     └── ...
 ```
 
@@ -89,6 +93,35 @@ This is a full-stack web application that integrates two trained YOLO object det
 - `POST /detect` - Detect objects in an image
 - `POST /detect/both` - Detect objects using both models
 
+## Testing
+
+The project includes a comprehensive testing framework located in the [testing/](file:///c%3A/CyberisAl/testing) directory:
+
+### Test Structure
+- `testing/api_endpoints/` - Tests for all REST API endpoints
+- `testing/model_testing/` - Tests for model functionality and integration
+
+### Running Tests
+
+#### Run All Tests
+```bash
+python testing/run_all_tests.py
+```
+
+#### Run Specific Test Suites
+```bash
+# Run API endpoint tests
+python -m unittest testing.api_endpoints.test_health_check
+python -m unittest testing.api_endpoints.test_models_endpoints
+python -m unittest testing.api_endpoints.test_detection_endpoints
+python -m unittest testing.api_endpoints.test_integration
+
+# Run model tests
+python testing/model_testing/test_fire_detection.py
+python testing/model_testing/test_weapon_detection.py
+python testing/model_testing/test_model_switching.py
+```
+
 ## Usage
 
 1. Open your browser and go to `http://localhost:3000`
@@ -111,7 +144,7 @@ PORT=8000
 
 ### Backend
 - FastAPI
-- Ultralytics (YOLOv8)
+- Ultralytics (YOLOv11)
 - OpenCV
 - PyTorch
 - NumPy
