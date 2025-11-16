@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
+import DatabaseMonitor from './DatabaseMonitor'; // Import the new component
 import './App.css';
 
 function App() {
@@ -383,6 +384,9 @@ function App() {
           </p>
         </div>
       </footer>
+
+      {/* Database Monitor - Floating at bottom right */}
+      <DatabaseMonitor />
     </div>
   );
 }
