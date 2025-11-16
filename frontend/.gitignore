@@ -1,0 +1,41 @@
+# Node modules
+node_modules/
+
+# Vite build output
+dist/
+build/
+
+# Vite cache
+.vite/
+*.vite.config.js.timestamp-*
+*.vite.*.log
+.vite/deps_temp_*/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor / IDE files
+.vscode/
+.idea/
+*.swp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+
+# Optional backup files
+*.bak
+
+# TypeScript

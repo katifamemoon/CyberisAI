@@ -96,9 +96,7 @@ async def get_models():
 # Switch between models
 @app.post("/models/switch")
 async def switch_model(model_name: str = Form(...)):
-    global current_model
     if model_manager.switch_model(model_name):
-        current_model = model_name
         return {"message": f"Switched to {model_name} model", "current_model": model_name}
     else:
         return {"error": "Invalid model name. Use 'weapon' or 'fire_smoke'"}
