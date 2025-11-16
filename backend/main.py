@@ -15,6 +15,9 @@ from services.model_manager import ModelManager
 from services.detection_service import DetectionService
 from services.logging_service import LoggingService
 
+# ===== NEW: Import database =====
+from database import get_db
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,12 +41,18 @@ model_manager = ModelManager()
 detection_service = DetectionService()
 logging_service = LoggingService()
 
+# ===== NEW: Initialize database =====
+db = None
+
 # Global variable for current model
 current_model = "weapon"
 
 # Load models on startup
 @app.on_event("startup")
 async def load_models():
+    global db
+    
+    # Load ML models
     result = model_manager.load_models()
     if not result.get("weapon_loaded") and not result.get("fire_smoke_loaded"):
         logger.error("No models loaded successfully")
@@ -51,11 +60,30 @@ async def load_models():
         logger.info("Models loaded successfully")
         global current_model
         current_model = model_manager.current_model
+    
+    # ===== NEW: Initialize database =====
+    try:
+        db = get_db()
+        logger.info("✓ Database connected successfully")
+    except Exception as e:
+        logger.error(f"✗ Database connection failed: {e}")
+        logger.warning("⚠️ Running without database - detections won't be saved")
+
+# ===== NEW: Shutdown event =====
+@app.on_event("shutdown")
+async def shutdown_event():
+    if db:
+        db.close_all_connections()
+        logger.info("✓ Database connections closed")
 
 # Health check endpoint
 @app.get("/")
 async def root():
-    return {"message": "YOLO Object Detection API is running"}
+    db_status = "connected" if db else "disconnected"
+    return {
+        "message": "YOLO Object Detection API is running",
+        "database": db_status
+    }
 
 # Get available models
 @app.get("/models")
@@ -77,7 +105,10 @@ async def switch_model(model_name: str = Form(...)):
 
 # Detect objects in an image
 @app.post("/detect")
-async def detect_objects(file: UploadFile = File(...)):
+async def detect_objects(
+    file: UploadFile = File(...),
+    camera_id: str = Form("default")  # NEW: Optional camera ID
+):
     global current_model
     
     # Select model based on current selection
@@ -102,6 +133,39 @@ async def detect_objects(file: UploadFile = File(...)):
     
     detections = detection_result["detections"]
     
+    # ===== NEW: Save detections to database =====
+    saved_detections = []
+    if db and detections:
+        for detection in detections:
+            try:
+                # Determine detection type based on class name
+                class_name = detection['class'].lower()
+                
+                # Map class names to detection types
+                if 'weapon' in class_name or 'gun' in class_name or 'knife' in class_name:
+                    detection_type = 'weapon'
+                elif 'fire' in class_name:
+                    detection_type = 'fire'
+                elif 'smoke' in class_name:
+                    detection_type = 'smoke'
+                else:
+                    detection_type = detection['class']
+                
+                detection_id = db.insert_detection(
+                    detection_type=detection_type,
+                    confidence=detection['confidence'],
+                    camera_id=camera_id,
+                    model_name=f"YOLOv8-{model_manager.current_model}",
+                    bbox_coordinates=detection['box']
+                )
+                
+                if detection_id:
+                    saved_detections.append(detection_id)
+                    logger.info(f"✓ Saved {detection_type} detection (ID: {detection_id})")
+                    
+            except Exception as e:
+                logger.error(f"✗ Failed to save detection to database: {e}")
+    
     # Draw bounding boxes using detection service
     processed_img = detection_service.draw_detections(img, detections)
     
@@ -115,12 +179,17 @@ async def detect_objects(file: UploadFile = File(...)):
     return {
         "detections": detections,
         "image": base64.b64encode(img_bytes).decode('utf-8'),
-        "model_used": model_manager.current_model
+        "model_used": model_manager.current_model,
+        "saved_to_db": len(saved_detections),  # NEW
+        "detection_ids": saved_detections  # NEW
     }
 
 # Detect with both models
 @app.post("/detect/both")
-async def detect_both_models(file: UploadFile = File(...)):
+async def detect_both_models(
+    file: UploadFile = File(...),
+    camera_id: str = Form("default")  # NEW: Optional camera ID
+):
     if not model_manager.models_loaded():
         return {"error": "One or both models not loaded"}
     
@@ -137,6 +206,10 @@ async def detect_both_models(file: UploadFile = File(...)):
     img_weapon = img.copy()
     img_fire_smoke = img.copy()
     
+    # ===== NEW: Lists to store DB IDs =====
+    weapon_db_ids = []
+    fire_smoke_db_ids = []
+    
     # Run object detection with weapon model
     weapon_model = model_manager.get_model("weapon")
     if weapon_model is None:
@@ -152,7 +225,7 @@ async def detect_both_models(file: UploadFile = File(...)):
             conf = box.conf
             class_name = weapon_model.names[int(c)]
             
-            weapon_detections.append({
+            detection_data = {
                 "class": class_name,
                 "confidence": float(conf),
                 "box": {
@@ -161,7 +234,23 @@ async def detect_both_models(file: UploadFile = File(...)):
                     "x2": int(b[2]),
                     "y2": int(b[3])
                 }
-            })
+            }
+            weapon_detections.append(detection_data)
+            
+            # ===== NEW: Save to database =====
+            if db:
+                try:
+                    detection_id = db.insert_detection(
+                        detection_type='weapon',
+                        confidence=float(conf),
+                        camera_id=camera_id,
+                        model_name="YOLOv8-weapon",
+                        bbox_coordinates=detection_data['box']
+                    )
+                    if detection_id:
+                        weapon_db_ids.append(detection_id)
+                except Exception as e:
+                    logger.error(f"Failed to save weapon detection: {e}")
             
             # Draw bounding box (red for weapon)
             cv2.rectangle(img_weapon, (int(b[0]), int(b[1])), (int(b[2]), int(b[3])), (0, 0, 255), 2)
@@ -184,7 +273,7 @@ async def detect_both_models(file: UploadFile = File(...)):
             conf = box.conf
             class_name = fire_smoke_model.names[int(c)]
             
-            fire_smoke_detections.append({
+            detection_data = {
                 "class": class_name,
                 "confidence": float(conf),
                 "box": {
@@ -193,7 +282,25 @@ async def detect_both_models(file: UploadFile = File(...)):
                     "x2": int(b[2]),
                     "y2": int(b[3])
                 }
-            })
+            }
+            fire_smoke_detections.append(detection_data)
+            
+            # ===== NEW: Save to database =====
+            if db:
+                try:
+                    # Determine if it's fire or smoke
+                    detection_type = 'fire' if 'fire' in class_name.lower() else 'smoke'
+                    detection_id = db.insert_detection(
+                        detection_type=detection_type,
+                        confidence=float(conf),
+                        camera_id=camera_id,
+                        model_name="YOLOv8-fire_smoke",
+                        bbox_coordinates=detection_data['box']
+                    )
+                    if detection_id:
+                        fire_smoke_db_ids.append(detection_id)
+                except Exception as e:
+                    logger.error(f"Failed to save fire/smoke detection: {e}")
             
             # Draw bounding box (blue for fire/smoke)
             cv2.rectangle(img_fire_smoke, (int(b[0]), int(b[1])), (int(b[2]), int(b[3])), (255, 0, 0), 2)
@@ -212,8 +319,90 @@ async def detect_both_models(file: UploadFile = File(...)):
         "weapon_detections": weapon_detections,
         "fire_smoke_detections": fire_smoke_detections,
         "weapon_image": base64.b64encode(img_bytes_weapon).decode('utf-8'),
-        "fire_smoke_image": base64.b64encode(img_bytes_fire_smoke).decode('utf-8')
+        "fire_smoke_image": base64.b64encode(img_bytes_fire_smoke).decode('utf-8'),
+        "weapon_db_ids": weapon_db_ids,  # NEW
+        "fire_smoke_db_ids": fire_smoke_db_ids  # NEW
     }
+
+# ===== NEW: Database endpoints =====
+
+@app.get("/detections/recent")
+async def get_recent_detections(
+    limit: int = 10,
+    detection_type: str = None,
+    hours: int = 24
+):
+    """Get recent detections from database"""
+    if not db:
+        return {"error": "Database not available"}
+    
+    try:
+        detections = db.get_recent_detections(
+            limit=limit,
+            detection_type=detection_type,
+            hours=hours
+        )
+        
+        result = []
+        for det in detections:
+            result.append({
+                "id": det[0],
+                "type": det[1],
+                "confidence": det[2],
+                "timestamp": det[3].isoformat(),
+                "camera_id": det[4],
+                "image_path": det[5],
+                "status": det[6]
+            })
+        
+        return {
+            "detections": result,
+            "count": len(result),
+            "period_hours": hours
+        }
+    except Exception as e:
+        logger.error(f"Error fetching detections: {e}")
+        return {"error": str(e)}
+
+@app.get("/statistics")
+async def get_statistics(hours: int = 24):
+    """Get detection statistics"""
+    if not db:
+        return {"error": "Database not available"}
+    
+    try:
+        stats = db.get_statistics(hours=hours)
+        return {
+            "statistics": stats,
+            "period_hours": hours
+        }
+    except Exception as e:
+        logger.error(f"Error fetching statistics: {e}")
+        return {"error": str(e)}
+
+@app.put("/detections/{detection_id}/status")
+async def update_detection_status(
+    detection_id: int,
+    status: str = Form(...),
+    notes: str = Form(None)
+):
+    """Update detection status (e.g., resolved, false_alarm)"""
+    if not db:
+        return {"error": "Database not available"}
+    
+    try:
+        success = db.update_detection_status(detection_id, status, notes)
+        if success:
+            return {
+                "success": True,
+                "detection_id": detection_id,
+                "new_status": status
+            }
+        else:
+            return {"error": "Update failed"}
+    except Exception as e:
+        logger.error(f"Error updating detection: {e}")
+        return {"error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
